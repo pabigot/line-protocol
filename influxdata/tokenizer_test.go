@@ -50,7 +50,8 @@ func TestTokenizerTake(t *testing.T) {
 	c := qt.New(t)
 	for _, test := range tokenizerTakeTests {
 		c.Run(test.testName, func(c *qt.C) {
-			tok := test.newTokenizer("aabbcccddefg")
+			s := "aabbcccddefga"
+			tok := test.newTokenizer(s)
 			data1 := tok.take(newByteSet('a', 'b', 'c'), 0)
 			c.Assert(string(data1), qt.Equals, "aabbccc")
 
@@ -59,16 +60,23 @@ func TestTokenizerTake(t *testing.T) {
 			c.Assert(tok.r, qt.Equals, 0)
 
 			data3 := tok.take(newByteSet(' ').invert(), len(data1)+len(data2))
-			c.Assert(string(data3), qt.Equals, "efg")
+			c.Assert(string(data3), qt.Equals, "efga")
 			c.Assert(tok.complete, qt.Equals, true)
 
 			data4 := tok.take(newByteSet(' ').invert(), len(data1)+len(data2)+len(data3))
 			c.Assert(string(data4), qt.Equals, "")
 
+			data5 := tok.take(newByteSet('a', 'b', 'c'), 100)
+			c.Assert(string(data5), qt.Equals, "")
+
+			data6 := tok.take(newByteSet('a', 'b', 'c'), len(s))
+			c.Assert(string(data6), qt.Equals, "")
+
+
 			// Check that none of them have been overwritten.
 			c.Assert(string(data1), qt.Equals, "aabbccc")
 			c.Assert(string(data2), qt.Equals, "dd")
-			c.Assert(string(data3), qt.Equals, "efg")
+			c.Assert(string(data3), qt.Equals, "efga")
 			if test.expectError != "" {
 				c.Assert(tok.err, qt.ErrorMatches, test.expectError)
 			} else {

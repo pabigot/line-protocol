@@ -68,7 +68,7 @@ outer:
 }
 
 // at returns the byte at i bytes after the current read position.
-// It assumes that the byte has already been read (use t.isEmpty to check
+// It assumes that the byte has already been read (use t.ensure to check
 // whether it's there).
 func (t *Tokenizer) at(i int) byte {
 	return t.buf[t.r+i]

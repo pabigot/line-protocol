@@ -1,5 +1,10 @@
 package influxdata
 
+import (
+	"fmt"
+	"strings"
+)
+
 // save these methods from staticcheck. we're going to use them later.
 var (
 	_ = whitespace
@@ -7,13 +12,27 @@ var (
 )
 
 // newByteset returns a set representation
-// of the given bytes.
-func newByteSet(bytes ...byte) *byteSet {
+// of the bytes in the given string.
+func newByteSet(s string) *byteSet {
 	var set byteSet
-	for _, b := range bytes {
-		set.set(b)
+	for i := 0; i < len(s); i++ {
+		set.set(s[i])
 	}
 	return &set
+}
+
+func (b *byteSet) String() string {
+	var buf strings.Builder
+	for i := 0; i < 256; i++ {
+		if b.get(byte(i)) {
+			buf.WriteByte(byte(i))
+		}
+	}
+	s := buf.String()
+	if len(s) > 128 {
+		return fmt.Sprintf("not(%v)", b.invert())
+	}
+	return fmt.Sprintf("%q", s)
 }
 
 // TODO benchmark it. This is compact (good cache behaviour)
@@ -39,6 +58,15 @@ func (b *byteSet) union(b1 *byteSet) *byteSet {
 	return &r
 }
 
+// intersect returns the intersection of b and b1.
+func (b *byteSet) intersect(b1 *byteSet) *byteSet {
+	r := *b
+	for i := range r {
+		r[i] &= b1[i]
+	}
+	return &r
+}
+
 // invert returns everything not in b.
 func (b *byteSet) invert() *byteSet {
 	r := *b
@@ -46,10 +74,4 @@ func (b *byteSet) invert() *byteSet {
 		r[i] = ^r[i]
 	}
 	return &r
-}
-
-// whitespace returns a set containing all characters
-// recognized as white space.
-func whitespace() *byteSet {
-	return newByteSet(' ', '\t', '\n', '\r', '\f')
 }

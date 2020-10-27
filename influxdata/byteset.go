@@ -39,7 +39,7 @@ func (b *byteSet) String() string {
 // but maybe [256]bool might be faster (less operations).
 type byteSet [4]uint64
 
-// holds reports whether b holds the byte x.
+// get reports whether b holds the byte x.
 func (b *byteSet) get(x uint8) bool {
 	return b[x>>6]&(1<<(x&63)) != 0
 }

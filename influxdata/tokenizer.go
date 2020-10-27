@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	// When the buffer is grown, it will be grown be a minimum of 8K.
+	// When the buffer is grown, it will be grown by a minimum of 8K.
 	minGrow = 8192
 	// The buffer will be grown if there's less than minRead space available
 	// to read into.
@@ -14,20 +14,20 @@ const (
 )
 
 var (
-	measurementChars      = newByteSet(",").union(whitespace).invert()
-	measurementEscapes    = newEscaper(" ,")
-	tagKeyChars           = newByteSet(",=").union(whitespace).invert()
-	tagKeyEscapes         = newEscaper(",= ")
-	tagValChars           = newByteSet(",").union(whitespace).invert()
-	tagValEscapes         = newEscaper(", =")
-	fieldSeparatorSpace   = newByteSet(" \t\r\f")
+	measurementChars      = newByteSet(",").union(whitespace).invert() // don't allow commas and whitespace
+	measurementEscapes    = newEscaper(" ,") // do allow escaped spaces and commas
+	tagKeyChars           = newByteSet(",=").union(whitespace).invert() // don't allow commas, equals, and whitespace
+	tagKeyEscapes         = newEscaper(",= ") // do allow escaped commas, spaces, and equals
+	tagValChars           = newByteSet(",=").union(whitespace).invert() // don't allow commas, equals and whitespace
+	tagValEscapes         = newEscaper(", =") // do allow escaped commas, whitespace, and equals
+	fieldSeparatorSpace   = newByteSet(" \t\r\f") // accept any of these "spaces" to denote field separator
 	fieldKeyChars         = tagKeyChars
 	fieldKeyEscapes       = tagKeyEscapes
-	fieldStringValChars   = newByteSet(`"`).invert()
+	fieldStringValChars   = newByteSet(`"'`).invert() // according to the docs, a naked / is not allowed here but takeEsc() always allows naked /
 	fieldStringValEscapes = newEscaper(`\"`)
-	fieldValChars         = newByteSet(",").union(whitespace).invert()
+	fieldValChars         = newByteSet(",").union(whitespace).invert() // don't allow commas and whitespace // Why no commas here?
 	timeChars             = newByteSet("-0123456789")
-	whitespace            = fieldSeparatorSpace.union(newByteSet("\n"))
+	whitespace            = fieldSeparatorSpace.union(notNewline.invert())
 	notNewline            = newByteSet("\n").invert()
 )
 
@@ -53,7 +53,7 @@ type Tokenizer struct {
 	// is known to be all the data that's available.
 	complete bool
 
-	// section holds the current section of the entry that's being
+	// section holds the current Section of the entry that's being
 	// read.
 	section Section
 
@@ -91,6 +91,8 @@ func NewTokenizer(r io.Reader) *Tokenizer {
 // NewTokenizerAtSection returns a tokenizer that parses the given
 // bytes but starting at the given section. This enables (for example)
 // parsing of the tags section of an entry without the preceding measurement name.
+// This does not scan forward to the given section; it assumes the byte array
+// starts at the given section.
 func NewTokenizerAtSection(buf []byte, section Section) *Tokenizer {
 	tok := &Tokenizer{
 		buf:      buf,
@@ -192,16 +194,21 @@ func (t *Tokenizer) NextTag() (key, value []byte, err error) {
 		return nil, nil, t.syntaxErrorf("empty tag name")
 	}
 	if !t.ensure(1) || t.at(0) != '=' {
-		return nil, nil, t.syntaxErrorf("expected '=' after tag key %q, but got %q instead", tagKey, t.at(0))
+		return nil, nil, t.syntaxErrorf("expected '=' after tag key %q, but got '%c' instead", tagKey, t.at(0))
 	}
 	t.advance(1)
 	tagVal := t.takeEsc(tagValChars, &tagValEscapes.revTable)
 	if len(tagVal) == 0 {
-		return nil, nil, t.syntaxErrorf("expected value after tag name")
+		return nil, nil, t.syntaxErrorf("expected value after tag name, but got empty tag value")
 	}
 	if !t.ensure(1) {
-		return nil, nil, t.syntaxErrorf("expected value after tag name")
+		return nil, nil, t.syntaxErrorf("expected next tag comma or field separator, but got end of input")
 	}
+
+	if t.at(0) == '=' {
+		return nil, nil, t.syntaxErrorf("expected next tag comma or field separator, but '=' instead")
+	}
+
 	if err := t.advanceTagComma(); err != nil {
 		return nil, nil, err
 	}
@@ -235,8 +242,8 @@ func (t *Tokenizer) advanceTagComma() error {
 // Note that this must be called before Time because
 // fields precede the timestamp in the line-protocol entry.
 //
-// The returned value slice may not be fully checked: to
-// check its validity, use NewValueFromBytes, or use NextField.
+// The returned value slice may not be valid: to check
+// its validity, use NewValueFromBytes, or use NextField.
 func (t *Tokenizer) NextFieldBytes() (key []byte, kind ValueKind, value []byte, err error) {
 	if ok, err := t.advanceToSection(FieldSection); err != nil {
 		return nil, Unknown, nil, err
@@ -248,10 +255,10 @@ func (t *Tokenizer) NextFieldBytes() (key []byte, kind ValueKind, value []byte, 
 		return nil, Unknown, nil, t.syntaxErrorf("expected field key but none found")
 	}
 	if !t.ensure(1) {
-		return nil, Unknown, nil, t.syntaxErrorf("want '=' after field name, found end of input ")
+		return nil, Unknown, nil, t.syntaxErrorf("want '=' after field key, found end of input")
 	}
 	if nextc := t.at(0); nextc != '=' {
-		return nil, Unknown, nil, t.syntaxErrorf("want '=' after field name, found %q", nextc)
+		return nil, Unknown, nil, t.syntaxErrorf("want '=' after field key, found '%c'", nextc)
 	}
 	t.advance(1)
 	if !t.ensure(1) {
@@ -270,7 +277,7 @@ func (t *Tokenizer) NextFieldBytes() (key []byte, kind ValueKind, value []byte, 
 		}
 		if t.at(0) != '"' {
 			// This shouldn't be able to happen, as all characters are allowed in a string.
-			return nil, Unknown, nil, t.syntaxErrorf("unexpected string termination")
+			return nil, Unknown, nil, t.syntaxErrorf("unexpected string termination with '%c'", t.at(0))
 		}
 		// Skip trailing quote
 		t.advance(1)
@@ -384,8 +391,7 @@ func (t *Tokenizer) skipEmptyLines() {
 }
 
 func (t *Tokenizer) advanceToSection(section Section) (_ok bool, _err error) {
-	defer func() {
-	}()
+
 	if t.section == section {
 		return true, nil
 	}
